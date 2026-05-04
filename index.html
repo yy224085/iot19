@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RO SMART MONITORING SYSTEM</title>
+    <!-- CSS -->
+    <link rel="stylesheet" href="style.css">
+    <!-- MQTT.js -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header panel">
+            <div class="brand">
+                <h1>RO SMART MONITORING SYSTEM</h1>
+                <span class="subtitle">SCADA HMI DASHBOARD v1.0</span>
+            </div>
+            <div class="system-status">
+                <div class="status-indicator">
+                    <span id="mqtt-led" class="led led-red"></span>
+                    <span class="label">MQTT BROKER</span>
+                </div>
+                <div class="status-indicator">
+                    <span id="esp-led" class="led led-red"></span>
+                    <span class="label">ESP32 PLC</span>
+                </div>
+                <div class="clock" id="live-clock">00:00:00</div>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <main class="grid-container">
+            
+            <!-- Left Column: Controls & Alerts -->
+            <div class="left-col">
+                <section class="panel control-panel">
+                    <h2>CONTROL PANEL</h2>
+                    <div class="control-grid">
+                        <button class="btn btn-primary" onclick="publishCommand('ON')">PUMP ON</button>
+                        <button class="btn btn-danger" onclick="publishCommand('OFF')">PUMP OFF</button>
+                        <button class="btn btn-secondary" onclick="publishCommand('AUTO')">AUTO MODE</button>
+                        <button class="btn btn-secondary" onclick="publishCommand('MANUAL')">MANUAL MODE</button>
+                        <button class="btn btn-warning full-width" onclick="publishCommand('RESET')">RESET ALERTS</button>
+                    </div>
+                </section>
+
+                <section class="panel alert-panel">
+                    <h2>SYSTEM ALERTS</h2>
+                    <div class="alert-history" id="alert-container">
+                        <!-- Alerts will be injected here -->
+                    </div>
+                </section>
+
+                <section class="panel logs-panel">
+                    <h2>SYSTEM LOGS</h2>
+                    <div class="logs-container" id="logs-container">
+                        <!-- Logs injected here -->
+                    </div>
+                </section>
+            </div>
+
+            <!-- Center Column: Diagram & Telemetry -->
+            <div class="center-col">
+                <section class="panel diagram-panel">
+                    <h2>PROCESS PIPELINE DIAGRAM</h2>
+                    <div class="pipeline-diagram">
+                        <!-- Simulated Pipeline Flow -->
+                        <div class="pipe-node">R1</div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">Sand Filter<br><span id="node-sand" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">Carbon 1<br><span id="node-carbon1" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">Cartridge<br><span id="node-cartridge" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node highlight" id="pump-node">BOOSTER<br>PUMP</div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node ro-membrane">RO Membrane<br><span id="node-ro" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">Calcite<br><span id="node-calcite" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">Carbon 2<br><span id="node-carbon2" class="filter-val">--%</span></div>
+                        <div class="pipe"><div class="flow"></div></div>
+                        <div class="pipe-node">R4</div>
+                    </div>
+                </section>
+
+                <section class="panel telemetry-panel">
+                    <h2>WATER QUALITY & SENSORS</h2>
+                    <div class="telemetry-grid">
+                        <div class="sensor-card">
+                            <span class="label">TDS Level</span>
+                            <span class="value cyan"><span id="val-tds">0.0</span> <span class="unit">ppm</span></span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="label">pH Level</span>
+                            <span class="value cyan"><span id="val-ph">0.0</span> <span class="unit">pH</span></span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="label">Turbidity</span>
+                            <span class="value cyan"><span id="val-turbidity">0.0</span> <span class="unit">NTU</span></span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="label">Pressure</span>
+                            <span class="value cyan"><span id="val-pressure">0.0</span> <span class="unit">Bar</span></span>
+                        </div>
+                    </div>
+                    
+                    <div class="status-grid mt-3">
+                        <div class="status-card">
+                            <span class="label">Pump State</span>
+                            <span id="val-pump" class="badge badge-red">OFF</span>
+                        </div>
+                        <div class="status-card">
+                            <span class="label">Operation Mode</span>
+                            <span id="val-mode" class="badge badge-secondary">MANUAL</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: Tanks & Charts -->
+            <div class="right-col">
+                <section class="panel tanks-panel">
+                    <h2>RESERVOIR LEVELS</h2>
+                    <div class="tanks-container">
+                        <div class="tank-wrapper">
+                            <div class="tank"><div class="liquid" id="tank-r1"></div></div>
+                            <span class="tank-label">R1<br><span id="val-r1">0</span>%</span>
+                        </div>
+                        <div class="tank-wrapper">
+                            <div class="tank"><div class="liquid" id="tank-r2"></div></div>
+                            <span class="tank-label">R2<br><span id="val-r2">0</span>%</span>
+                        </div>
+                        <div class="tank-wrapper">
+                            <div class="tank"><div class="liquid" id="tank-r3"></div></div>
+                            <span class="tank-label">R3<br><span id="val-r3">0</span>%</span>
+                        </div>
+                        <div class="tank-wrapper">
+                            <div class="tank"><div class="liquid" id="tank-r4"></div></div>
+                            <span class="tank-label">R4<br><span id="val-r4">0</span>%</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel chart-panel">
+                    <h2>REAL-TIME TRENDS</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="scadaChart"></canvas>
+                    </div>
+                </section>
+            </div>
+
+        </main>
+    </div>
+    
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
