@@ -1,325 +1,316 @@
 /**
  * RO SMART MONITORING SYSTEM
- * SCADA Logic & MQTT Client Connection
+ * HiveMQ Cloud Version
  */
 
-// --- CONFIGURATION ---
+/* ================= MQTT CONFIG ================= */
+
 const MQTT_CONFIG = {
-    // Modify this URI to point to your Mosquitto broker IP if running on a different machine
-    uri: 'ws://localhost:9001', 
+    uri: "wss://broker.hivemq.com:8884/mqtt",
     options: {
-        username: 'user1',
-        password: '1234',
-        reconnectPeriod: 5000,
-        connectTimeout: 30000,
+        reconnectPeriod: 3000,
+        connectTimeout: 30000
     }
 };
 
+/* ================= TOPICS ================= */
+
 const TOPICS = {
-    sub_data: 'ro/data',
-    sub_alert: 'ro/alert',
-    sub_status: 'ro/status',
-    pub_control: 'ro/control'
+    sub_data: "yasserdz/ro/data",
+    sub_alert: "yasserdz/ro/alert",
+    sub_status: "yasserdz/ro/status",
+    pub_control: "yasserdz/ro/control"
 };
 
-// Global Chart Instance
+/* ================= GLOBALS ================= */
+
+let client;
 let scadaChart;
 
-// --- INITIALIZATION ---
-document.addEventListener('DOMContentLoaded', () => {
+/* ================= INIT ================= */
+
+document.addEventListener("DOMContentLoaded", () => {
     initClock();
     initChart();
     setupMQTT();
-    addLog('System initialized. Awaiting network connection...', 'info');
+    addLog("System initialized", "success");
 });
 
-// --- CLOCK LOGIC ---
+/* ================= CLOCK ================= */
+
 function initClock() {
-    const clockEl = document.getElementById('live-clock');
+    const clockEl = document.getElementById("live-clock");
+
     setInterval(() => {
         const now = new Date();
-        clockEl.textContent = now.toLocaleTimeString('en-GB', { hour12: false });
+        clockEl.textContent = now.toLocaleTimeString();
     }, 1000);
 }
 
-// --- MQTT CLIENT LOGIC ---
-let client;
+/* ================= MQTT ================= */
 
 function setupMQTT() {
-    addLog(`Attempting connection to broker at ${MQTT_CONFIG.uri}...`, 'info');
-    
-    // Connect using MQTT.js
+
+    addLog("Connecting to HiveMQ...", "info");
+
     client = mqtt.connect(MQTT_CONFIG.uri, MQTT_CONFIG.options);
 
-    client.on('connect', () => {
-        setIndicator('mqtt-led', 'green');
-        addLog('MQTT Broker connected successfully.', 'success');
-        
-        // Subscribe to topics
-        client.subscribe([TOPICS.sub_data, TOPICS.sub_alert, TOPICS.sub_status], (err) => {
-            if (!err) {
-                addLog('Subscribed to RO telemetry topics.', 'success');
-            } else {
-                addLog(`Subscription error: ${err.message}`, 'error');
-            }
-        });
+    client.on("connect", () => {
+
+        setIndicator("mqtt-led", "green");
+
+        addLog("Connected to HiveMQ", "success");
+
+        client.subscribe([
+            TOPICS.sub_data,
+            TOPICS.sub_alert,
+            TOPICS.sub_status
+        ]);
     });
 
-    client.on('reconnect', () => {
-        setIndicator('mqtt-led', 'yellow');
-        addLog('Reconnecting to MQTT broker...', 'warn');
+    client.on("reconnect", () => {
+        setIndicator("mqtt-led", "yellow");
+        addLog("Reconnecting...", "warn");
     });
 
-    client.on('offline', () => {
-        setIndicator('mqtt-led', 'red');
-        setIndicator('esp-led', 'red'); // Assume ESP offline if broker is unreachable
-        addLog('MQTT Client offline.', 'error');
-        setFlowState(false);
+    client.on("offline", () => {
+        setIndicator("mqtt-led", "red");
+        addLog("Offline", "error");
     });
 
-    client.on('error', (err) => {
-        addLog(`MQTT Error: ${err.message}`, 'error');
+    client.on("error", (err) => {
+        addLog("MQTT Error: " + err.message, "error");
     });
 
-    client.on('message', (topic, message) => {
-        const payloadStr = message.toString();
+    client.on("message", (topic, message) => {
+
+        const payload = message.toString();
+
         try {
+
             if (topic === TOPICS.sub_data) {
-                const data = JSON.parse(payloadStr);
+                const data = JSON.parse(payload);
                 handleTelemetryData(data);
-                // If we get data, the ESP32 is online
-                setIndicator('esp-led', 'green'); 
-            } 
+                setIndicator("esp-led", "green");
+            }
+
             else if (topic === TOPICS.sub_alert) {
-                const alert = JSON.parse(payloadStr); // Expecting { message: "msg", severity: "error|warn|info" }
-                handleAlert(alert.message, alert.severity);
+                handleAlert(payload, "warn");
             }
+
             else if (topic === TOPICS.sub_status) {
-                const status = JSON.parse(payloadStr);
-                setIndicator('esp-led', status.online ? 'green' : 'red');
-                if(!status.online) setFlowState(false);
+                addLog(payload, "info");
             }
+
         } catch (e) {
-            addLog(`JSON Parse Error on topic ${topic}`, 'error');
+            addLog("JSON Parse Error", "error");
         }
     });
 }
 
-// --- DATA HANDLING & UI UPDATE ---
+/* ================= TELEMETRY ================= */
+
 function handleTelemetryData(data) {
-    // 1. Update Sensor Values
-    document.getElementById('val-tds').textContent = data.tds.toFixed(1);
-    document.getElementById('val-ph').textContent = data.ph.toFixed(1);
-    document.getElementById('val-turbidity').textContent = data.turbidity.toFixed(2);
-    document.getElementById('val-pressure').textContent = data.pressure.toFixed(1);
 
-    // 2. Update Status Badges
-    const pumpValEl = document.getElementById('val-pump');
-    if(data.pump) {
-        pumpValEl.textContent = 'ON';
-        pumpValEl.className = 'badge badge-green';
-    } else {
-        pumpValEl.textContent = 'OFF';
-        pumpValEl.className = 'badge badge-red';
-    }
+    updateValue("val-tds", data.tds.toFixed(1));
+    updateValue("val-ph", data.ph.toFixed(2));
+    updateValue("val-turbidity", data.turbidity.toFixed(2));
+    updateValue("val-pressure", data.pressure.toFixed(2));
 
-    const modeValEl = document.getElementById('val-mode');
-    modeValEl.textContent = data.autoMode ? 'AUTO' : 'MANUAL';
-    modeValEl.className = data.autoMode ? 'badge badge-green' : 'badge badge-secondary';
+    updateValue("val-r1", data.r1);
+    updateValue("val-r2", data.r2);
+    updateValue("val-r3", data.r3);
+    updateValue("val-r4", data.r4);
 
-    // 3. Update Pipeline Diagram
+    updateTank("r1", data.r1);
+    updateTank("r2", data.r2);
+    updateTank("r3", data.r3);
+    updateTank("r4", data.r4);
+
+    updateNode("node-sand", data.sandFilter);
+    updateNode("node-carbon1", data.carbon1);
+    updateNode("node-cartridge", data.cartridge);
+    updateNode("node-ro", data.roMembrane);
+    updateNode("node-calcite", data.calcite);
+    updateNode("node-carbon2", data.carbon2);
+
+    updatePump(data.pump);
+    updateMode(data.autoMode);
+
     setFlowState(data.pump);
-    document.getElementById('node-sand').textContent = data.sandFilter + '%';
-    document.getElementById('node-carbon1').textContent = data.carbon1 + '%';
-    document.getElementById('node-cartridge').textContent = data.cartridge + '%';
-    document.getElementById('node-ro').textContent = data.roMembrane + '%';
-    document.getElementById('node-calcite').textContent = data.calcite + '%';
-    document.getElementById('node-carbon2').textContent = data.carbon2 + '%';
 
-    // 4. Update Tanks
-    updateTank('r1', data.r1);
-    updateTank('r2', data.r2);
-    updateTank('r3', data.r3);
-    updateTank('r4', data.r4);
-
-    // 5. Update Chart
     updateChart(data.tds, data.pressure, data.ph);
 }
 
-function updateTank(id, value) {
-    const safeVal = Math.min(Math.max(value, 0), 100);
-    document.getElementById(`tank-${id}`).style.height = safeVal + '%';
-    document.getElementById(`val-${id}`).textContent = safeVal;
+/* ================= HELPERS ================= */
+
+function updateValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
 }
 
-function setFlowState(isActive) {
-    const flows = document.querySelectorAll('.flow');
+function updateNode(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value + "%";
+}
+
+function updateTank(id, value) {
+    const tank = document.getElementById("tank-" + id);
+
+    if (tank) {
+        tank.style.height = value + "%";
+    }
+}
+
+function updatePump(state) {
+
+    const el = document.getElementById("val-pump");
+
+    if (!el) return;
+
+    el.textContent = state ? "ON" : "OFF";
+    el.className = state ? "badge badge-green" : "badge badge-red";
+}
+
+function updateMode(state) {
+
+    const el = document.getElementById("val-mode");
+
+    if (!el) return;
+
+    el.textContent = state ? "AUTO" : "MANUAL";
+    el.className = state ? "badge badge-green" : "badge badge-yellow";
+}
+
+function setFlowState(active) {
+
+    const flows = document.querySelectorAll(".flow");
+
     flows.forEach(flow => {
-        if(isActive) flow.classList.add('active');
-        else flow.classList.remove('active');
+        if (active) flow.classList.add("active");
+        else flow.classList.remove("active");
     });
 }
 
 function setIndicator(id, color) {
     const el = document.getElementById(id);
-    el.className = `led led-${color}`;
+    if (el) el.className = "led led-" + color;
 }
 
-// --- PUBLISH COMMANDS ---
+/* ================= COMMANDS ================= */
+
 function publishCommand(cmd) {
-    if(!client || !client.connected) {
-        showToast('Error: MQTT not connected', 'error');
+
+    if (!client || !client.connected) {
+        showToast("MQTT Not Connected", "error");
         return;
     }
-    
-    const payload = JSON.stringify({ command: cmd, timestamp: new Date().toISOString() });
-    client.publish(TOPICS.pub_control, payload, { qos: 1 }, (err) => {
-        if(err) {
-            addLog(`Failed to send command ${cmd}`, 'error');
-            showToast('Failed to send command', 'error');
-        } else {
-            addLog(`CMD Sent: ${cmd}`, 'info');
-            showToast(`Command sent: ${cmd}`, 'info');
-        }
-    });
+
+    client.publish(TOPICS.pub_control, cmd);
+
+    addLog("Command Sent: " + cmd, "info");
+    showToast(cmd, "success");
 }
 
-// --- ALERTS & LOGGING ---
+/* ================= ALERTS ================= */
+
 function handleAlert(message, severity) {
+    addLog("ALERT: " + message, severity);
     showToast(message, severity);
-    
-    // Add to alert history panel
-    const container = document.getElementById('alert-container');
-    const entry = document.createElement('div');
-    entry.className = 'alert-entry';
-    
-    let colorHex = '#e2e8f0';
-    if(severity === 'error') colorHex = 'var(--red)';
-    if(severity === 'warn') colorHex = 'var(--yellow)';
-    
-    entry.style.borderLeftColor = colorHex;
-    entry.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString('en-GB')}]</span> <span style="color:${colorHex}">${message}</span>`;
-    
-    container.prepend(entry);
-    if(container.children.length > 50) container.removeChild(container.lastChild);
 }
 
-function addLog(message, type = 'info') {
-    const container = document.getElementById('logs-container');
-    const entry = document.createElement('div');
-    entry.className = 'log-entry';
-    
-    let color = 'var(--text-secondary)';
-    if(type === 'error') color = 'var(--red)';
-    if(type === 'success') color = 'var(--green)';
-    if(type === 'warn') color = 'var(--yellow)';
-    
-    entry.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString('en-GB')}]</span> <span style="color: ${color}">${message}</span>`;
-    container.prepend(entry);
-    if(container.children.length > 100) container.removeChild(container.lastChild);
-}
+function showToast(message, type) {
 
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
+    const container = document.getElementById("toast-container");
+
+    if (!container) return;
+
+    const toast = document.createElement("div");
+
+    toast.className = "toast " + type;
     toast.textContent = message;
-    
+
     container.appendChild(toast);
-    
-    // Auto remove after 4 seconds
+
     setTimeout(() => {
-        toast.style.animation = 'slideIn 0.3s ease reverse forwards';
-        setTimeout(() => container.removeChild(toast), 300);
+        toast.remove();
     }, 4000);
 }
 
-// --- CHART.JS CONFIGURATION ---
+/* ================= LOGS ================= */
+
+function addLog(message, type = "info") {
+
+    const container = document.getElementById("logs-container");
+
+    if (!container) return;
+
+    const entry = document.createElement("div");
+
+    entry.className = "log-entry " + type;
+
+    entry.textContent =
+        "[" + new Date().toLocaleTimeString() + "] " + message;
+
+    container.prepend(entry);
+
+    if (container.children.length > 50) {
+        container.removeChild(container.lastChild);
+    }
+}
+
+/* ================= CHART ================= */
+
 function initChart() {
-    const ctx = document.getElementById('scadaChart').getContext('2d');
-    
-    Chart.defaults.color = '#94a3b8';
-    Chart.defaults.font.family = "'Segoe UI', sans-serif";
+
+    const ctx = document.getElementById("scadaChart");
+
+    if (!ctx) return;
 
     scadaChart = new Chart(ctx, {
-        type: 'line',
+        type: "line",
         data: {
-            labels: [], // Time labels
+            labels: [],
             datasets: [
                 {
-                    label: 'TDS (ppm)',
+                    label: "TDS",
                     data: [],
-                    borderColor: '#00d2ff',
-                    backgroundColor: 'rgba(0, 210, 255, 0.1)',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    fill: true,
-                    yAxisID: 'y'
+                    borderWidth: 2
                 },
                 {
-                    label: 'Pressure (Bar)',
+                    label: "Pressure",
                     data: [],
-                    borderColor: '#ffc107',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    yAxisID: 'y1'
+                    borderWidth: 2
                 },
                 {
-                    label: 'pH',
+                    label: "pH",
                     data: [],
-                    borderColor: '#00ff88',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    yAxisID: 'y1' // Map to same axis as pressure for scale reasons, or create y2
+                    borderWidth: 2
                 }
             ]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
-            animation: { duration: 0 }, // Disable animation for instant SCADA feel
-            interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: {
-                    grid: { color: 'rgba(255,255,255,0.05)' }
-                },
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: { display: true, text: 'TDS (ppm)' },
-                    grid: { color: 'rgba(255,255,255,0.05)' }
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    title: { display: true, text: 'Press. / pH' },
-                    grid: { drawOnChartArea: false }
-                }
-            },
-            plugins: {
-                legend: { position: 'top', labels: { boxWidth: 12 } }
-            }
+            animation: false
         }
     });
 }
 
 function updateChart(tds, pressure, ph) {
-    const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-    
-    const data = scadaChart.data;
-    data.labels.push(timeStr);
-    data.datasets[0].data.push(tds);
-    data.datasets[1].data.push(pressure);
-    data.datasets[2].data.push(ph);
 
-    // Keep only last 30 values
-    if (data.labels.length > 30) {
-        data.labels.shift();
-        data.datasets[0].data.shift();
-        data.datasets[1].data.shift();
-        data.datasets[2].data.shift();
+    if (!scadaChart) return;
+
+    const time = new Date().toLocaleTimeString();
+
+    scadaChart.data.labels.push(time);
+    scadaChart.data.datasets[0].data.push(tds);
+    scadaChart.data.datasets[1].data.push(pressure);
+    scadaChart.data.datasets[2].data.push(ph);
+
+    if (scadaChart.data.labels.length > 30) {
+        scadaChart.data.labels.shift();
+
+        scadaChart.data.datasets.forEach(ds => ds.data.shift());
     }
 
     scadaChart.update();
