@@ -1,6 +1,6 @@
 /**
  * RO SMART MONITORING SYSTEM
- * HiveMQ Cloud Version
+ * FIXED VERSION (ESP32 DISCONNECT DETECTION)
  */
 
 /* ================= MQTT CONFIG ================= */
@@ -26,6 +26,10 @@ const TOPICS = {
 
 let client;
 let scadaChart;
+
+// 🔥 NEW: heartbeat system
+let lastHeartbeat = 0;
+const OFFLINE_TIMEOUT = 8000;
 
 /* ================= INIT ================= */
 
@@ -58,7 +62,6 @@ function setupMQTT() {
     client.on("connect", () => {
 
         setIndicator("mqtt-led", "green");
-
         addLog("Connected to HiveMQ", "success");
 
         client.subscribe([
@@ -75,7 +78,14 @@ function setupMQTT() {
 
     client.on("offline", () => {
         setIndicator("mqtt-led", "red");
-        addLog("Offline", "error");
+        setIndicator("esp-led", "red");
+        addLog("MQTT Offline", "error");
+    });
+
+    client.on("close", () => {
+        setIndicator("mqtt-led", "red");
+        setIndicator("esp-led", "red");
+        addLog("Connection Closed", "error");
     });
 
     client.on("error", (err) => {
@@ -88,16 +98,25 @@ function setupMQTT() {
 
         try {
 
+            /* ========== DATA ========== */
             if (topic === TOPICS.sub_data) {
+
                 const data = JSON.parse(payload);
+
                 handleTelemetryData(data);
+
+                // 🔥 UPDATE HEARTBEAT
+                lastHeartbeat = Date.now();
+
                 setIndicator("esp-led", "green");
             }
 
+            /* ========== ALERT ========== */
             else if (topic === TOPICS.sub_alert) {
                 handleAlert(payload, "warn");
             }
 
+            /* ========== STATUS ========== */
             else if (topic === TOPICS.sub_status) {
                 addLog(payload, "info");
             }
@@ -106,6 +125,30 @@ function setupMQTT() {
             addLog("JSON Parse Error", "error");
         }
     });
+
+    // 🔥 START WATCHDOG
+    startConnectionWatchdog();
+}
+
+/* ================= WATCHDOG ================= */
+
+function startConnectionWatchdog() {
+
+    setInterval(() => {
+
+        if (lastHeartbeat === 0) return;
+
+        const now = Date.now();
+
+        if (now - lastHeartbeat > OFFLINE_TIMEOUT) {
+
+            setIndicator("esp-led", "red");
+            addLog("ESP32 OFFLINE (no data received)", "error");
+
+            lastHeartbeat = 0;
+        }
+
+    }, 2000);
 }
 
 /* ================= TELEMETRY ================= */
@@ -156,16 +199,11 @@ function updateNode(id, value) {
 
 function updateTank(id, value) {
     const tank = document.getElementById("tank-" + id);
-
-    if (tank) {
-        tank.style.height = value + "%";
-    }
+    if (tank) tank.style.height = value + "%";
 }
 
 function updatePump(state) {
-
     const el = document.getElementById("val-pump");
-
     if (!el) return;
 
     el.textContent = state ? "ON" : "OFF";
@@ -173,9 +211,7 @@ function updatePump(state) {
 }
 
 function updateMode(state) {
-
     const el = document.getElementById("val-mode");
-
     if (!el) return;
 
     el.textContent = state ? "AUTO" : "MANUAL";
@@ -183,12 +219,10 @@ function updateMode(state) {
 }
 
 function setFlowState(active) {
-
     const flows = document.querySelectorAll(".flow");
 
     flows.forEach(flow => {
-        if (active) flow.classList.add("active");
-        else flow.classList.remove("active");
+        flow.classList.toggle("active", active);
     });
 }
 
@@ -222,7 +256,6 @@ function handleAlert(message, severity) {
 function showToast(message, type) {
 
     const container = document.getElementById("toast-container");
-
     if (!container) return;
 
     const toast = document.createElement("div");
@@ -232,9 +265,7 @@ function showToast(message, type) {
 
     container.appendChild(toast);
 
-    setTimeout(() => {
-        toast.remove();
-    }, 4000);
+    setTimeout(() => toast.remove(), 4000);
 }
 
 /* ================= LOGS ================= */
@@ -242,15 +273,12 @@ function showToast(message, type) {
 function addLog(message, type = "info") {
 
     const container = document.getElementById("logs-container");
-
     if (!container) return;
 
     const entry = document.createElement("div");
 
     entry.className = "log-entry " + type;
-
-    entry.textContent =
-        "[" + new Date().toLocaleTimeString() + "] " + message;
+    entry.textContent = "[" + new Date().toLocaleTimeString() + "] " + message;
 
     container.prepend(entry);
 
@@ -264,7 +292,6 @@ function addLog(message, type = "info") {
 function initChart() {
 
     const ctx = document.getElementById("scadaChart");
-
     if (!ctx) return;
 
     scadaChart = new Chart(ctx, {
@@ -272,21 +299,9 @@ function initChart() {
         data: {
             labels: [],
             datasets: [
-                {
-                    label: "TDS",
-                    data: [],
-                    borderWidth: 2
-                },
-                {
-                    label: "Pressure",
-                    data: [],
-                    borderWidth: 2
-                },
-                {
-                    label: "pH",
-                    data: [],
-                    borderWidth: 2
-                }
+                { label: "TDS", data: [], borderWidth: 2 },
+                { label: "Pressure", data: [], borderWidth: 2 },
+                { label: "pH", data: [], borderWidth: 2 }
             ]
         },
         options: {
@@ -309,7 +324,6 @@ function updateChart(tds, pressure, ph) {
 
     if (scadaChart.data.labels.length > 30) {
         scadaChart.data.labels.shift();
-
         scadaChart.data.datasets.forEach(ds => ds.data.shift());
     }
 
